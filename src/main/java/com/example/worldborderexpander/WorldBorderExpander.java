@@ -89,12 +89,12 @@ public class WorldBorderExpander implements ModInitializer {
         if (OBJECTIVE == null) {
             // 1.21.10: addObjective signature requires 6 args, incl. NumberFormat
             OBJECTIVE = sb.addObjective(
-                    "wbe_unique",
-                    ScoreboardCriterion.DUMMY,
-                    Text.literal("Unique Items"),
-                    ScoreboardCriterion.RenderType.INTEGER,
-                    false,
-                    NumberFormat.blank()
+                "wbe_unique",
+                ScoreboardCriterion.DUMMY,
+                Text.literal("Unique Items"),
+                ScoreboardCriterion.RenderType.INTEGER,
+                false,
+                null  // allowed; server will use the default integer format
             );
         }
     }
