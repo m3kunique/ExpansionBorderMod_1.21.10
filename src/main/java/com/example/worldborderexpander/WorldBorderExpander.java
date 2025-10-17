@@ -19,40 +19,48 @@ public class WorldBorderExpander implements ModInitializer {
     private static final Set<Identifier> GLOBAL_UNIQUE = new HashSet<>();
     private static final Map<UUID, Set<Identifier>> PER_PLAYER = new HashMap<>();
 
-    private static final double START_SIZE = 1.0; // 1x1 to start
+    private static final double START_SIZE = 1.0; // 1x1 start
     private static final double INCREMENT  = 1.0; // +1 block per new unique item
+
+    private static MinecraftServer server;
 
     @Override
     public void onInitialize() {
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            ServerWorld overworld = server.getOverworld();
+        // Initialize world border when server starts
+        ServerLifecycleEvents.SERVER_STARTED.register(s -> {
+            server = s;
+            ServerWorld overworld = s.getOverworld();
             WorldBorder border = overworld.getWorldBorder();
-            border.setCenter(overworld.getSpawnPos().getX(), overworld.getSpawnPos().getZ());
+            border.setCenter(0.0, 0.0);   // avoid spawn-pos API differences
             border.setSize(START_SIZE);
+            GLOBAL_UNIQUE.clear();
+            PER_PLAYER.clear();
         });
     }
 
+    // Called by our mixin when an item is actually picked up
     public static void onItemPickedUp(ServerPlayerEntity player, ItemStack stack) {
-        if (player.getServer() == null || stack.isEmpty()) return;
+        if (stack.isEmpty()) return;
 
         Identifier id = Registries.ITEM.getId(stack.getItem());
         boolean newForGlobal = GLOBAL_UNIQUE.add(id);
         PER_PLAYER.computeIfAbsent(player.getUuid(), k -> new HashSet<>()).add(id);
 
         if (newForGlobal) {
-            expandBorder(player.getServer());
-            broadcast(player.getServer(), Text.literal("[WBE] New unique item: " + id + " → border expanded!"));
+            expandBorder(player.getServerWorld().getServer());
+            broadcast(Text.literal("[WBE] New unique item: " + id + " → border expanded!"));
         }
-        // TODO: update tab/scoreboard display here if you want (numeric list column is easiest).
+        // TODO: update a scoreboard column here to show per-player counts on Tab
     }
 
-    private static void expandBorder(MinecraftServer server) {
-        ServerWorld overworld = server.getOverworld();
+    private static void expandBorder(MinecraftServer s) {
+        ServerWorld overworld = s.getOverworld();
         WorldBorder border = overworld.getWorldBorder();
         border.setSize(border.getSize() + INCREMENT);
     }
 
-    private static void broadcast(MinecraftServer server, Text msg) {
+    private static void broadcast(Text msg) {
+        if (server == null) return;
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             p.sendMessage(msg, false);
         }
