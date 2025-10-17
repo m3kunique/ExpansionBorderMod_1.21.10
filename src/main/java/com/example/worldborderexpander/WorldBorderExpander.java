@@ -2,6 +2,9 @@ package com.example.worldborderexpander;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -9,10 +12,14 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.SaplingBlock;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.BiomeTags;
 import net.minecraft.registry.tag.BlockTags;
@@ -29,6 +36,9 @@ import net.minecraft.util.Identifier;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.border.WorldBorder;
+import net.minecraft.world.gen.feature.ConfiguredFeature;
+import net.minecraft.world.gen.feature.TreeFeatureConfig;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.Set;
@@ -67,7 +77,7 @@ public class WorldBorderExpander implements ModInitializer {
             PER_PLAYER.clear();
 
             ServerWorld overworld = s.getOverworld();
-            BlockPos treeSpawn = pickSpawnNearTree(overworld);
+            BlockPos treeSpawn = ensureSpawnWithTree(overworld);
 
             initBordersForAll(s, config.startingBorderSize, treeSpawn.getX() + 0.5, treeSpawn.getZ() + 0.5);
             SPAWN_POS = treeSpawn;
@@ -162,6 +172,85 @@ public class WorldBorderExpander implements ModInitializer {
                         return 1;
                     })
                 )
+                .then(literal("config")
+                    .requires(source -> source.hasPermissionLevel(2))
+                    .then(literal("startingBorderSize")
+                        .then(argument("value", DoubleArgumentType.doubleArg(1.0, 10000.0))
+                            .executes(ctx -> {
+                                double value = DoubleArgumentType.getDouble(ctx, "value");
+                                config.startingBorderSize = value;
+                                config.save();
+                                ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] startingBorderSize set to " + value + " (applies to new worlds)"), true);
+                                return 1;
+                            })
+                        )
+                    )
+                    .then(literal("expansionIncrement")
+                        .then(argument("value", DoubleArgumentType.doubleArg(0.1, 1000.0))
+                            .executes(ctx -> {
+                                double value = DoubleArgumentType.getDouble(ctx, "value");
+                                config.expansionIncrement = value;
+                                config.save();
+                                ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] expansionIncrement set to " + value), true);
+                                return 1;
+                            })
+                        )
+                    )
+                    .then(literal("spawnSearchRadius")
+                        .then(argument("value", IntegerArgumentType.integer(32, 512))
+                            .executes(ctx -> {
+                                int value = IntegerArgumentType.getInteger(ctx, "value");
+                                config.spawnSearchRadius = value;
+                                config.save();
+                                ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] spawnSearchRadius set to " + value + " (applies to new worlds)"), true);
+                                return 1;
+                            })
+                        )
+                    )
+                    .then(literal("broadcastNewItems")
+                        .then(argument("value", StringArgumentType.word())
+                            .suggests((ctx, builder) -> {
+                                builder.suggest("true");
+                                builder.suggest("false");
+                                return builder.buildFuture();
+                            })
+                            .executes(ctx -> {
+                                String value = StringArgumentType.getString(ctx, "value");
+                                config.broadcastNewItems = Boolean.parseBoolean(value);
+                                config.save();
+                                ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] broadcastNewItems set to " + config.broadcastNewItems), true);
+                                return 1;
+                            })
+                        )
+                    )
+                    .then(literal("showPlayerName")
+                        .then(argument("value", StringArgumentType.word())
+                            .suggests((ctx, builder) -> {
+                                builder.suggest("true");
+                                builder.suggest("false");
+                                return builder.buildFuture();
+                            })
+                            .executes(ctx -> {
+                                String value = StringArgumentType.getString(ctx, "value");
+                                config.showPlayerName = Boolean.parseBoolean(value);
+                                config.save();
+                                ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] showPlayerName set to " + config.showPlayerName), true);
+                                return 1;
+                            })
+                        )
+                    )
+                    .then(literal("list")
+                        .executes(ctx -> {
+                            ctx.getSource().sendFeedback(() -> Text.literal("§6=== WBE Config ==="), false);
+                            ctx.getSource().sendFeedback(() -> Text.literal("§estartingBorderSize: §f" + config.startingBorderSize), false);
+                            ctx.getSource().sendFeedback(() -> Text.literal("§eexpansionIncrement: §f" + config.expansionIncrement), false);
+                            ctx.getSource().sendFeedback(() -> Text.literal("§espawnSearchRadius: §f" + config.spawnSearchRadius), false);
+                            ctx.getSource().sendFeedback(() -> Text.literal("§ebroadcastNewItems: §f" + config.broadcastNewItems), false);
+                            ctx.getSource().sendFeedback(() -> Text.literal("§eshowPlayerName: §f" + config.showPlayerName), false);
+                            return 1;
+                        })
+                    )
+                )
                 .then(literal("reload")
                     .requires(source -> source.hasPermissionLevel(2))
                     .executes(ctx -> {
@@ -191,10 +280,13 @@ public class WorldBorderExpander implements ModInitializer {
             if (server == null) return;
             expandBorder(server);
             
-            String itemName = stack.getName().getString();
-            broadcast(Text.literal("§6[WBE] §e" + player.getName().getString() + 
-                " §ffound a new item: §a" + itemName + " §7(" + GLOBAL_UNIQUE.size() + "/" + OBTAINABLE_ITEMS.size() + ")"));
-            broadcast(Text.literal("§7→ Border expanded to §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7blocks!"));
+            if (config.broadcastNewItems) {
+                String itemName = stack.getName().getString();
+                String playerName = config.showPlayerName ? player.getName().getString() : "Someone";
+                broadcast(Text.literal("§6[WBE] §e" + playerName + 
+                    " §ffound a new item: §a" + itemName + " §7(" + GLOBAL_UNIQUE.size() + "/" + OBTAINABLE_ITEMS.size() + ")"));
+                broadcast(Text.literal("§7→ Border expanded to §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7blocks!"));
+            }
             
             updateAllScores();
         }
@@ -245,86 +337,147 @@ public class WorldBorderExpander implements ModInitializer {
         }
     }
 
-    /* -------------------- Spawn Search -------------------- */
+    /* -------------------- Spawn with Tree Guarantee -------------------- */
 
-    private static BlockPos pickSpawnNearTree(ServerWorld world) {
-        int maxRadius = config.spawnSearchRadius;
-        int[] radii = generateRadii(maxRadius);
-        int step = 16;
+    private static BlockPos ensureSpawnWithTree(ServerWorld world) {
+        // Try to find natural tree spawn first
+        BlockPos naturalSpawn = findNaturalTreeSpawn(world);
+        if (naturalSpawn != null) {
+            world.getServer().sendMessage(Text.literal("[WBE] Found natural tree at " + naturalSpawn.toShortString()));
+            return naturalSpawn;
+        }
         
-        for (int r : radii) {
-            if (r == 0) {
-                BlockPos p = candidateAt(world, 0, 0);
-                if (p != null && isGoodSpawn(world, p)) {
-                    return p;
-                }
-                continue;
-            }
-            
+        // No tree found nearby, spawn our own tree at (0, y, 0)
+        world.getServer().sendMessage(Text.literal("[WBE] No natural tree found, generating tree at spawn..."));
+        BlockPos spawnPos = generateTreeAtSpawn(world);
+        world.getServer().sendMessage(Text.literal("[WBE] Tree generated at " + spawnPos.toShortString()));
+        return spawnPos;
+    }
+
+    private static BlockPos findNaturalTreeSpawn(ServerWorld world) {
+        int maxRadius = Math.min(config.spawnSearchRadius, 128); // Cap at 128 for performance
+        int step = 8; // Check every 8 blocks
+        
+        // Check center first
+        BlockPos center = checkForTreeNearby(world, 0, 0, 2);
+        if (center != null) return center;
+        
+        // Check in expanding rings
+        for (int r = step; r <= maxRadius; r += step) {
             for (int x = -r; x <= r; x += step) {
                 for (int z = -r; z <= r; z += step) {
                     if (Math.abs(x) != r && Math.abs(z) != r) continue;
                     
-                    BlockPos p = candidateAt(world, x, z);
-                    if (p != null && isGoodSpawn(world, p)) {
-                        return p;
+                    BlockPos found = checkForTreeNearby(world, x, z, 2);
+                    if (found != null) return found;
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    private static BlockPos checkForTreeNearby(ServerWorld world, int x, int z, int radius) {
+        int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
+        BlockPos center = new BlockPos(x, y, z);
+        
+        // Skip if in ocean
+        if (isOceanBiome(world, center)) return null;
+        
+        // Check if there's a log within radius
+        BlockPos.Mutable m = new BlockPos.Mutable();
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                for (int dy = -1; dy <= 8; dy++) {
+                    m.set(x + dx, y + dy, z + dz);
+                    if (world.getBlockState(m).isIn(BlockTags.LOGS)) {
+                        // Found a log! Return a safe spot next to it
+                        return getSafeSpotNearTree(world, m.toImmutable());
                     }
                 }
             }
         }
         
-        // Fallback: just use (0, surface_y, 0)
-        int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, 0, 0);
-        return new BlockPos(0, y, 0);
+        return null;
     }
 
-    private static int[] generateRadii(int maxRadius) {
-        List<Integer> radii = new ArrayList<>();
-        radii.add(0);
-        for (int r = 32; r <= maxRadius; r += 32) {
-            radii.add(r);
+    private static BlockPos getSafeSpotNearTree(ServerWorld world, BlockPos treePos) {
+        // Try to find a safe spot on the ground near the tree
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                
+                int x = treePos.getX() + dx;
+                int z = treePos.getZ() + dz;
+                int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
+                BlockPos pos = new BlockPos(x, y, z);
+                
+                BlockState ground = world.getBlockState(pos);
+                BlockState above = world.getBlockState(pos.up());
+                
+                if (ground.isSolid() && above.isAir() && ground.getFluidState().isEmpty()) {
+                    return pos;
+                }
+            }
         }
-        return radii.stream().mapToInt(i -> i).toArray();
+        
+        // Fallback to tree position
+        return treePos;
     }
 
-    private static BlockPos candidateAt(ServerWorld world, int x, int z) {
-        int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
-        BlockPos pos = new BlockPos(x, y, z);
-        BlockState state = world.getBlockState(pos);
+    private static BlockPos generateTreeAtSpawn(ServerWorld world) {
+        // Find suitable spot at (0, y, 0)
+        int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, 0, 0);
+        BlockPos basePos = new BlockPos(0, y, 0);
         
-        // Must not be water/lava
-        if (!state.getFluidState().isEmpty()) return null;
-        // Must be solid block
-        if (!state.isSolid()) return null;
+        // Make sure we have solid ground
+        BlockState ground = world.getBlockState(basePos);
+        if (ground.isAir() || !ground.getFluidState().isEmpty()) {
+            // Place grass block
+            world.setBlockState(basePos, Blocks.GRASS_BLOCK.getDefaultState());
+        }
         
-        return pos;
+        // Generate a simple oak tree
+        BlockPos treeBase = basePos.up();
+        generateSimpleOakTree(world, treeBase);
+        
+        // Return spawn position next to tree
+        return basePos;
     }
 
-    private static boolean isGoodSpawn(ServerWorld world, BlockPos pos) {
-        if (isOceanBiome(world, pos)) return false;
-        return hasVegetationNearby(world, pos, 3, 5);
+    private static void generateSimpleOakTree(ServerWorld world, BlockPos base) {
+        Random random = new Random();
+        int height = 4 + random.nextInt(3); // 4-6 blocks tall
+        
+        // Place trunk
+        for (int i = 0; i < height; i++) {
+            world.setBlockState(base.up(i), Blocks.OAK_LOG.getDefaultState());
+        }
+        
+        // Place leaves (simple sphere shape)
+        BlockPos leafBase = base.up(height - 2);
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -1; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    // Skip corners and center column
+                    if (Math.abs(dx) == 2 && Math.abs(dz) == 2) continue;
+                    if (dx == 0 && dz == 0 && dy <= 0) continue;
+                    
+                    BlockPos leafPos = leafBase.add(dx, dy, dz);
+                    if (world.getBlockState(leafPos).isAir()) {
+                        world.setBlockState(leafPos, Blocks.OAK_LEAVES.getDefaultState());
+                    }
+                }
+            }
+        }
+        
+        // Top leaf
+        world.setBlockState(base.up(height), Blocks.OAK_LEAVES.getDefaultState());
     }
 
     private static boolean isOceanBiome(ServerWorld world, BlockPos pos) {
         RegistryEntry<Biome> entry = world.getBiome(pos);
         return entry.isIn(BiomeTags.IS_OCEAN);
-    }
-
-    private static boolean hasVegetationNearby(ServerWorld world, BlockPos pos, int radius, int up) {
-        BlockPos.Mutable m = new BlockPos.Mutable();
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                for (int dy = 0; dy <= up; dy++) {
-                    m.set(pos.getX() + dx, pos.getY() + dy, pos.getZ() + dz);
-                    BlockState state = world.getBlockState(m);
-                    
-                    if (state.isIn(BlockTags.LOGS) || state.isIn(BlockTags.LEAVES)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
     }
 
     /* -------------------- Border Management -------------------- */
