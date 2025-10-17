@@ -5,11 +5,17 @@ import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.example.worldborderexpander.net.WBENetworking;
+import com.example.worldborderexpander.net.WBEPayloads;
+
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
+import net.minecraft.network.PacketByteBuf;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -65,12 +71,12 @@ public class WorldBorderExpander implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        WBENetworking.registerCommon();
         // Load config
         config = WBEConfig.load();
         
         // Initialize obtainable items list
         initializeObtainableItems();
-
         ServerLifecycleEvents.SERVER_STARTED.register(s -> {
             server = s;
             GLOBAL_UNIQUE.clear();
@@ -100,6 +106,7 @@ public class WorldBorderExpander implements ModInitializer {
             );
             ensureObjective();
             updatePlayerScore(player);
+            sendFullSync(player);
         });
 
         // Register commands
@@ -265,32 +272,33 @@ public class WorldBorderExpander implements ModInitializer {
 
     public static void onItemPickedUp(ServerPlayerEntity player, ItemStack stack) {
         if (stack.isEmpty()) return;
-
         Identifier id = Registries.ITEM.getId(stack.getItem());
-        
-        // Only count obtainable items
         if (!OBTAINABLE_ITEMS.contains(id)) return;
 
         boolean newForGlobal = GLOBAL_UNIQUE.add(id);
         PER_PLAYER.computeIfAbsent(player.getUuid(), k -> new HashSet<>()).add(id);
 
+        // дельта персонально
+        sendAddPersonal(player, id);
+
         updatePlayerScore(player);
 
         if (newForGlobal) {
-            if (server == null) return;
             expandBorder(server);
-            
             if (config.broadcastNewItems) {
                 String itemName = stack.getName().getString();
                 String playerName = config.showPlayerName ? player.getName().getString() : "Someone";
-                broadcast(Text.literal("§6[WBE] §e" + playerName + 
-                    " §ffound a new item: §a" + itemName + " §7(" + GLOBAL_UNIQUE.size() + "/" + OBTAINABLE_ITEMS.size() + ")"));
-                broadcast(Text.literal("§7→ Border expanded to §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7blocks!"));
+                broadcast(Text.literal("§6[WBE] §e" + playerName + " §fнашёл новый предмет: §a" + itemName
+                        + " §7(" + GLOBAL_UNIQUE.size() + "/" + OBTAINABLE_ITEMS.size() + ")"));
+                broadcast(Text.literal("§7→ Граница расширена до §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7блоков!"));
             }
-            
             updateAllScores();
+
+            // дельта всем — теперь глобально найден
+            sendAddGlobalToAll(id);
         }
     }
+
 
     /* -------------------- Obtainable Items Filter -------------------- */
 
@@ -542,5 +550,24 @@ public class WorldBorderExpander implements ModInitializer {
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             p.sendMessage(msg, false);
         }
+    }
+
+    private static void sendFullSync(ServerPlayerEntity player) {
+        // global
+        ServerPlayNetworking.send(player, new WBEPayloads.SyncAllGlobal(new ArrayList<>(GLOBAL_UNIQUE)));
+        // personal
+        var personal = PER_PLAYER.getOrDefault(player.getUuid(), java.util.Collections.emptySet());
+        ServerPlayNetworking.send(player, new WBEPayloads.SyncAllPersonal(new ArrayList<>(personal)));
+    }
+
+    private static void sendAddGlobalToAll(Identifier id) {
+        var payload = new WBEPayloads.AddGlobal(id);
+        for (ServerPlayerEntity pl : server.getPlayerManager().getPlayerList()) {
+            ServerPlayNetworking.send(pl, payload);
+        }
+    }
+
+    private static void sendAddPersonal(ServerPlayerEntity player, Identifier id) {
+        ServerPlayNetworking.send(player, new WBEPayloads.AddPersonal(id));
     }
 }

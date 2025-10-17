@@ -4,7 +4,8 @@
 	"version": "1.0.0",
 	"name": "World Border Expander",
 	"entrypoints": {
-	  "main": ["com.example.worldborderexpander.WorldBorderExpander"]
+	  "main": ["com.example.worldborderexpander.WorldBorderExpander"],
+	  "client": ["com.example.worldborderexpander.client.WorldBorderExpanderClient"]
 	},
 	"mixins": [
 	  "worldborderexpander.mixins.json"
@@ -14,5 +15,5 @@
 	  "fabric": "*",
 	  "minecraft": "1.21.10"
 	}
-  }
+}
   
