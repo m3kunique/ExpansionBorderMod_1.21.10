@@ -12,10 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ItemEntity.class)
 public abstract class ItemEntityPickupMixin {
-
-    // Fires on both sides; we gate to server by requiring ServerPlayerEntity
-    @Inject(method = "onPlayerCollision(Lnet/minecraft/entity/player/PlayerEntity;)V",
-            at = @At("HEAD"))
+    @Inject(method = "onPlayerCollision(Lnet/minecraft/entity/player/PlayerEntity;)V", at = @At("HEAD"))
     private void wbe_onPlayerCollision(PlayerEntity player, CallbackInfo ci) {
         if (!(player instanceof ServerPlayerEntity serverPlayer)) return;
         ItemEntity self = (ItemEntity) (Object) this;
