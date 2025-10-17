@@ -29,6 +29,16 @@ public class WorldBorderExpander implements ModInitializer {
 
     private static final double START_SIZE = 1.0; // 1x1 start
     private static final double INCREMENT  = 1.0; // +1 block per new unique item
+    private static final double CENTER_X = 0.0;
+    private static final double CENTER_Z = 0.0;
+
+    private static void initBordersForAll(MinecraftServer s, double size) {
+        for (ServerWorld w : s.getWorlds()) {
+            WorldBorder b = w.getWorldBorder();
+            b.setCenter(CENTER_X, CENTER_Z); // одинаковый центр
+            b.setSize(size);                 // одинаковый стартовый размер
+        }
+    }
 
     private static MinecraftServer server;
     private static ScoreboardObjective OBJECTIVE; // shows in TAB
@@ -39,14 +49,11 @@ public class WorldBorderExpander implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(s -> {
             server = s;
 
-            // world border
-            ServerWorld overworld = s.getOverworld();
-            WorldBorder border = overworld.getWorldBorder();
-            border.setCenter(0.0, 0.0);
-            border.setSize(START_SIZE);
-
             GLOBAL_UNIQUE.clear();
             PER_PLAYER.clear();
+
+            // вместо ручной настройки только оверворлда:
+            initBordersForAll(s, START_SIZE);
 
             ensureObjective();
             setTabObjective();
@@ -126,9 +133,13 @@ public class WorldBorderExpander implements ModInitializer {
     /* -------------------- World border helpers -------------------- */
 
     private static void expandBorder(MinecraftServer s) {
-        ServerWorld overworld = s.getOverworld();
-        WorldBorder border = overworld.getWorldBorder();
-        border.setSize(border.getSize() + INCREMENT);
+        // считаем новый размер от Overworld
+        double newSize = s.getOverworld().getWorldBorder().getSize() + INCREMENT;
+
+        // применяем один и тот же размер для всех миров
+        for (ServerWorld w : s.getWorlds()) {
+            w.getWorldBorder().setSize(newSize);
+        }
     }
 
     private static void broadcast(Text msg) {
