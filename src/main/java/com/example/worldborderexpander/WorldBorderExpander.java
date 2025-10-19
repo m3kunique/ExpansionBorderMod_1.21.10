@@ -12,7 +12,6 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
 import net.minecraft.block.BlockState;
@@ -39,7 +38,6 @@ import net.minecraft.world.Heightmap;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.border.WorldBorder;
 
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.Set;
 
@@ -47,7 +45,6 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.stream.Collectors;
 
 import static net.minecraft.server.command.CommandManager.*;
 
@@ -451,7 +448,7 @@ public class WorldBorderExpander implements ModInitializer {
                 BlockState ground = world.getBlockState(pos);
                 BlockState above = world.getBlockState(pos.up());
                 
-                if (ground.isSolid() && above.isAir() && ground.getFluidState().isEmpty()) {
+                if (!ground.isAir() && above.isAir() && ground.getFluidState().isEmpty()) {
                     return pos;
                 }
             }
