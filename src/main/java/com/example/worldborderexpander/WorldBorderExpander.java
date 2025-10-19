@@ -343,7 +343,7 @@ public class WorldBorderExpander implements ModInitializer {
             Items.INFESTED_CRACKED_STONE_BRICKS, Items.INFESTED_CHISELED_STONE_BRICKS,
             Items.INFESTED_DEEPSLATE, Items.REINFORCED_DEEPSLATE,
             Items.BUDDING_AMETHYST, Items.PETRIFIED_OAK_SLAB, Items.TIPPED_ARROW,
-            Items.SPAWNER
+            Items.TRIAL_SPAWNER
         ));
 
         // Exclude all spawn eggs
