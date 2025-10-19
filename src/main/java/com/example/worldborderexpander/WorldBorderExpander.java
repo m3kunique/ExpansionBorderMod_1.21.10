@@ -47,6 +47,7 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static net.minecraft.server.command.CommandManager.*;
 
@@ -72,13 +73,17 @@ public class WorldBorderExpander implements ModInitializer {
         
         ServerLifecycleEvents.SERVER_STARTED.register(s -> {
             server = s;
-            GLOBAL_UNIQUE.clear();
-            PER_PLAYER.clear();
-
+            
             ServerWorld overworld = s.getOverworld();
+            
+            // Load saved progress BEFORE initializing borders
+            loadProgress(overworld);
+            
             BlockPos treeSpawn = ensureSpawnWithTree(overworld);
 
-            initBordersForAll(s, config.startingBorderSize, treeSpawn.getX() + 0.5, treeSpawn.getZ() + 0.5);
+            // Calculate border size based on collected items
+            double borderSize = config.startingBorderSize + (GLOBAL_UNIQUE.size() * config.expansionIncrement);
+            initBordersForAll(s, borderSize, treeSpawn.getX() + 0.5, treeSpawn.getZ() + 0.5);
             SPAWN_POS = treeSpawn;
 
             ensureObjective();
@@ -86,7 +91,17 @@ public class WorldBorderExpander implements ModInitializer {
             
             s.sendMessage(Text.literal("[WBE] World Border Expander initialized at " + treeSpawn.toShortString()));
             s.sendMessage(Text.literal("[WBE] Total obtainable items: " + OBTAINABLE_ITEMS.size()));
-            s.sendMessage(Text.literal("[WBE] Starting border: " + config.startingBorderSize + " | Increment: " + config.expansionIncrement));
+            s.sendMessage(Text.literal("[WBE] Loaded progress: " + GLOBAL_UNIQUE.size() + " items found"));
+            s.sendMessage(Text.literal("[WBE] Border size: " + borderSize + " | Increment: " + config.expansionIncrement));
+        });
+        
+        ServerLifecycleEvents.SERVER_STOPPING.register(s -> {
+            saveProgress(s.getOverworld());
+        });
+        
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            // Auto-save when any player disconnects
+            saveProgress(server.getOverworld());
         });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, srv) -> {
@@ -101,12 +116,14 @@ public class WorldBorderExpander implements ModInitializer {
             );
             
             ensureObjective();
+            setTabObjective();
             updatePlayerScore(player);
             
             // Send sync AFTER player is fully loaded (delay by 1 tick)
             srv.execute(() -> {
                 if (player.networkHandler != null) {
                     sendFullSync(player);
+                    updatePlayerScore(player);
                 }
             });
         });
@@ -268,6 +285,14 @@ public class WorldBorderExpander implements ModInitializer {
                         return 1;
                     })
                 )
+                .then(literal("save")
+                    .requires(source -> source.hasPermissionLevel(2))
+                    .executes(ctx -> {
+                        saveProgress(server.getOverworld());
+                        ctx.getSource().sendFeedback(() -> Text.literal("§a[WBE] Progress saved manually!"), true);
+                        return 1;
+                    })
+                )
             );
         });
     }
@@ -321,7 +346,7 @@ public class WorldBorderExpander implements ModInitializer {
             Items.INFESTED_CRACKED_STONE_BRICKS, Items.INFESTED_CHISELED_STONE_BRICKS,
             Items.INFESTED_DEEPSLATE, Items.REINFORCED_DEEPSLATE,
             Items.BUDDING_AMETHYST, Items.PETRIFIED_OAK_SLAB, Items.TIPPED_ARROW,
-            Items.TRIAL_SPAWNER
+            Items.SPAWNER
         ));
 
         // Exclude all spawn eggs
@@ -569,5 +594,133 @@ public class WorldBorderExpander implements ModInitializer {
     private static void sendAddPersonal(ServerPlayerEntity player, Identifier id) {
         if (player.networkHandler == null) return;
         ServerPlayNetworking.send(player, new WBEPayloads.AddPersonal(id));
+    }
+    
+    /* -------------------- Progress Persistence -------------------- */
+    
+    private static Path getProgressFile(ServerWorld world) {
+        // Get the world save directory
+        Path worldDir = world.getServer().getRunDirectory().resolve("saves")
+            .resolve(world.getServer().getSaveProperties().getLevelName());
+        return worldDir.resolve("wbe_progress.json");
+    }
+    
+    private static void saveProgress(ServerWorld world) {
+        try {
+            Path progressFile = getProgressFile(world);
+            
+            // Ensure directory exists
+            Files.createDirectories(progressFile.getParent());
+            
+            // Create save data structure
+            var saveData = new HashMap<String, Object>();
+            
+            // Save global unique items
+            List<String> globalList = GLOBAL_UNIQUE.stream()
+                .map(Identifier::toString)
+                .collect(Collectors.toList());
+            saveData.put("global_unique", globalList);
+            
+            // Save per-player data
+            Map<String, List<String>> perPlayerData = new HashMap<>();
+            for (Map.Entry<UUID, Set<Identifier>> entry : PER_PLAYER.entrySet()) {
+                String uuid = entry.getKey().toString();
+                List<String> items = entry.getValue().stream()
+                    .map(Identifier::toString)
+                    .collect(Collectors.toList());
+                perPlayerData.put(uuid, items);
+            }
+            saveData.put("per_player", perPlayerData);
+            
+            // Save spawn position
+            if (SPAWN_POS != null) {
+                var spawnData = new HashMap<String, Integer>();
+                spawnData.put("x", SPAWN_POS.getX());
+                spawnData.put("y", SPAWN_POS.getY());
+                spawnData.put("z", SPAWN_POS.getZ());
+                saveData.put("spawn_pos", spawnData);
+            }
+            
+            // Write to file
+            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+            String json = gson.toJson(saveData);
+            Files.writeString(progressFile, json);
+            
+            System.out.println("[WBE] Progress saved: " + GLOBAL_UNIQUE.size() + " global items, " + PER_PLAYER.size() + " players");
+        } catch (IOException e) {
+            System.err.println("[WBE] Failed to save progress: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private static void loadProgress(ServerWorld world) {
+        GLOBAL_UNIQUE.clear();
+        PER_PLAYER.clear();
+        
+        try {
+            Path progressFile = getProgressFile(world);
+            if (!Files.exists(progressFile)) {
+                System.out.println("[WBE] No progress file found, starting fresh");
+                return;
+            }
+            
+            String json = Files.readString(progressFile);
+            Gson gson = new Gson();
+            
+            @SuppressWarnings("unchecked")
+            Map<String, Object> saveData = gson.fromJson(json, Map.class);
+            
+            // Load global unique items
+            @SuppressWarnings("unchecked")
+            List<String> globalList = (List<String>) saveData.get("global_unique");
+            if (globalList != null) {
+                for (String idStr : globalList) {
+                    Identifier id = Identifier.tryParse(idStr);
+                    if (id != null) {
+                        GLOBAL_UNIQUE.add(id);
+                    }
+                }
+            }
+            
+            // Load per-player data
+            @SuppressWarnings("unchecked")
+            Map<String, List<String>> perPlayerData = (Map<String, List<String>>) saveData.get("per_player");
+            if (perPlayerData != null) {
+                for (Map.Entry<String, List<String>> entry : perPlayerData.entrySet()) {
+                    try {
+                        UUID uuid = UUID.fromString(entry.getKey());
+                        Set<Identifier> items = new HashSet<>();
+                        for (String idStr : entry.getValue()) {
+                            Identifier id = Identifier.tryParse(idStr);
+                            if (id != null) {
+                                items.add(id);
+                            }
+                        }
+                        PER_PLAYER.put(uuid, items);
+                    } catch (IllegalArgumentException e) {
+                        System.err.println("[WBE] Invalid UUID in save data: " + entry.getKey());
+                    }
+                }
+            }
+            
+            // Load spawn position
+            @SuppressWarnings("unchecked")
+            Map<String, Object> spawnData = (Map<String, Object>) saveData.get("spawn_pos");
+            if (spawnData != null) {
+                try {
+                    int x = ((Number) spawnData.get("x")).intValue();
+                    int y = ((Number) spawnData.get("y")).intValue();
+                    int z = ((Number) spawnData.get("z")).intValue();
+                    SPAWN_POS = new BlockPos(x, y, z);
+                } catch (Exception e) {
+                    System.err.println("[WBE] Failed to load spawn position: " + e.getMessage());
+                }
+            }
+            
+            System.out.println("[WBE] Progress loaded: " + GLOBAL_UNIQUE.size() + " global items, " + PER_PLAYER.size() + " players");
+        } catch (IOException e) {
+            System.err.println("[WBE] Failed to load progress: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
