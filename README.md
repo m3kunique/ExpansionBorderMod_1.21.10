@@ -1,115 +1,150 @@
-# 🌍 World Border Expander
+# World Border Expander - Configuration Guide
 
-A Minecraft Fabric mod that starts you in a 1x1 world border and expands it as you collect unique items!
+## Location
+The config file is located at: `config/worldborderexpander.json`
 
-## 🎮 Concept
+It will be automatically created with default values when you first run the mod.
 
-You spawn in a tiny 1x1 block world border. The only way to expand your playable area is by collecting unique items. Each new item you find expands the border, allowing you to explore more of the world and find even more items!
+## Configuration Options
 
-### Features
-- ✅ Starts with a 1x1 world border (configurable)
-- ✅ Expands by 1 block per unique item (configurable)
-- ✅ Tracks 1000+ obtainable items
-- ✅ Per-player and global item tracking
-- ✅ TAB list shows each player's unique item count
-- ✅ Spawn guaranteed near trees for wood access
-- ✅ Full configuration system
-- ✅ In-game config editing with commands
-- ✅ Progress tracking commands
-- ✅ Filters out unobtainable items (bedrock, command blocks, etc.)
+### Border Settings
 
-## 📦 Installation
+#### `startingBorderSize` (default: `1.0`)
+- The initial size of the world border when the world starts
+- Minimum value: 1.0 block
+- Example: `"startingBorderSize": 5.0` for a 5x5 starting area
 
-1. Install [Fabric Loader](https://fabricmc.net/use/)
-2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
-3. Download World Border Expander
-4. Place the JAR file in your `mods` folder
-5. Launch Minecraft!
+#### `expansionIncrement` (default: `1.0`)
+- How much the border expands (in blocks) when a new unique item is collected
+- Minimum value: 0.1 blocks
+- Example: `"expansionIncrement": 2.0` to expand by 2 blocks per item
 
-## 🎯 Requirements
+### Spawn Search Settings
 
-- **Minecraft**: 1.21.10
-- **Fabric Loader**: 0.17.3 or higher
-- **Fabric API**: Latest version
-
-## 🕹️ Commands
-
-### Player Commands
-
-| Command | Description |
-|---------|-------------|
-| `/wbe progress` | Shows collection progress and border size |
-| `/wbe missing` | Lists up to 20 items you haven't collected |
-| `/wbe collected` | Lists up to 20 items you have collected |
-
-### Admin Commands (OP Level 2+)
-
-| Command | Description |
-|---------|-------------|
-| `/wbe reload` | Reloads the config file |
-| `/wbe config <setting> <value>` | Change config settings in-game |
-
-#### Config Command Examples:
-```
-/wbe config startingBorderSize 5
-/wbe config expansionIncrement 2.0
-/wbe config spawnSearchRadius 96
-/wbe config broadcastNewItems true
-/wbe config showPlayerName false
-```
-
-## ⚙️ Configuration
-
-Config file location: `config/worldborderexpander.json`
-
-### Quick Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `startingBorderSize` | 1.0 | Initial border size in blocks |
-| `expansionIncrement` | 1.0 | Border growth per unique item |
-| `spawnSearchRadius` | 128 | Max radius to search for spawn |
-| `broadcastNewItems` | true | Announce new item discoveries |
-| `showPlayerName` | true | Show player names in announcements |
+#### `spawnSearchRadius` (default: `128`)
+- Maximum radius (in blocks) to search for a suitable spawn point near trees
+- Range: 32-512 blocks
+- Lower values = faster world loading
+- Higher values = better chance of spawning near resources
+- **Recommended**: Keep at 128 or lower to prevent loading timeouts
 
 ### Item Filtering
 
-**Exclude specific items:**
+#### `excludedItems` (default: `[]`)
+- List of item IDs to exclude from the obtainable items list
+- These items will NOT count toward border expansion
+- Format: `"minecraft:item_name"`
+- Example:
+```json
+"excludedItems": [
+  "minecraft:dragon_egg",
+  "minecraft:elytra",
+  "minecraft:nether_star"
+]
+```
+
+#### `includedItems` (default: `[]`)
+- List of item IDs to forcefully include (overrides default exclusions)
+- Useful if you want to make normally-excluded items count
+- Format: same as excludedItems
+- Example:
+```json
+"includedItems": [
+  "minecraft:bedrock"
+]
+```
+
+### Message Settings
+
+#### `broadcastNewItems` (default: `true`)
+- Whether to announce to all players when someone finds a new item
+- Set to `false` for quieter gameplay
+
+#### `showPlayerName` (default: `true`)
+- Whether to show which player found the item in announcements
+- Only applies if `broadcastNewItems` is true
+
+## Default Excluded Items
+
+The mod automatically excludes these items (unless overridden with `includedItems`):
+- Command blocks and structure blocks
+- Bedrock, barriers, spawners
+- End portal frames
+- Debug/creative-only items
+- Infested blocks
+- Budding amethyst
+- Petrified oak slab
+- Reinforced deepslate
+
+## Example Configuration
+
 ```json
 {
+  "startingBorderSize": 3.0,
+  "expansionIncrement": 1.5,
+  "spawnSearchRadius": 96,
   "excludedItems": [
-    "minecraft:dragon_egg",
-    "minecraft:elytra"
-  ]
+    "minecraft:totem_of_undying",
+    "minecraft:heart_of_the_sea"
+  ],
+  "includedItems": [],
+  "broadcastNewItems": true,
+  "showPlayerName": true
 }
 ```
 
-**Force include items:**
-```json
-{
-  "includedItems": [
-    "minecraft:bedrock"
-  ]
-}
-```
+## In-Game Commands
 
-See [CONFIG_GUIDE.md](CONFIG_GUIDE.md) for detailed configuration options.
+### Player Commands
 
-## 🎮 Difficulty Presets
+#### `/wbe progress`
+Shows your collection progress and current border size
+
+#### `/wbe missing`
+Lists the first 20 items you haven't collected yet
+
+#### `/wbe collected`
+Lists the first 20 items you have collected
+
+### Admin Commands (OP Level 2+)
+
+#### `/wbe config list`
+Shows all current config values
+
+#### `/wbe config startingBorderSize <value>`
+Sets the starting border size (1.0 - 10000.0)
+- Example: `/wbe config startingBorderSize 5.0`
+- **Note**: Only applies to new worlds
+
+#### `/wbe config expansionIncrement <value>`
+Sets how much the border expands per unique item (0.1 - 1000.0)
+- Example: `/wbe config expansionIncrement 2.0`
+- **Note**: Takes effect immediately
+
+#### `/wbe config spawnSearchRadius <value>`
+Sets the search radius for finding trees at spawn (32 - 512)
+- Example: `/wbe config spawnSearchRadius 96`
+- **Note**: Only applies to new worlds
+
+#### `/wbe config broadcastNewItems <true|false>`
+Enable/disable announcing when new items are found
+- Example: `/wbe config broadcastNewItems false`
+
+#### `/wbe config showPlayerName <true|false>`
+Enable/disable showing player names in announcements
+- Example: `/wbe config showPlayerName false`
+
+#### `/wbe reload`
+Reloads the config file from disk
+
+## Tips for Configuration
 
 ### Easy Mode
 ```json
 {
   "startingBorderSize": 10.0,
-  "expansionIncrement": 2.0
-}
-```
-
-### Normal Mode (Default)
-```json
-{
-  "startingBorderSize": 1.0,
-  "expansionIncrement": 1.0
+  "expansionIncrement": 2.0,
+  "spawnSearchRadius": 128
 }
 ```
 
@@ -117,155 +152,43 @@ See [CONFIG_GUIDE.md](CONFIG_GUIDE.md) for detailed configuration options.
 ```json
 {
   "startingBorderSize": 1.0,
-  "expansionIncrement": 0.5
+  "expansionIncrement": 0.5,
+  "spawnSearchRadius": 64
 }
 ```
 
-### Speedrun Mode
-Exclude music discs and other rare items:
+### Speedrun Mode (fewer items)
 ```json
 {
   "startingBorderSize": 1.0,
-  "expansionIncrement": 2.0,
+  "expansionIncrement": 3.0,
   "excludedItems": [
     "minecraft:music_disc_13",
     "minecraft:music_disc_cat",
-    "minecraft:music_disc_blocks"
+    "minecraft:music_disc_blocks",
+    "minecraft:music_disc_chirp",
+    "minecraft:music_disc_far",
+    "minecraft:music_disc_mall",
+    "minecraft:music_disc_mellohi",
+    "minecraft:music_disc_stal",
+    "minecraft:music_disc_strad",
+    "minecraft:music_disc_ward",
+    "minecraft:music_disc_11",
+    "minecraft:music_disc_wait"
   ]
 }
 ```
 
-## 🌳 Spawn System
+## Troubleshooting
 
-- Searches for a spawn point near trees (configurable radius)
-- If no suitable location found within radius, **spawns a tree at (0, Y, 0)**
-- Guarantees you have wood access from the start
-- Avoids ocean biomes
+**World takes forever to load?**
+- Reduce `spawnSearchRadius` to 64 or 96
+- The mod will fall back to (0, Y, 0) if no good spawn is found
 
-## 📊 How It Works
+**Border expanding too fast/slow?**
+- Adjust `expansionIncrement`
+- Or exclude/include specific items to change the total count
 
-1. **World Generation**: 
-   - Border starts at configured size (default: 1x1)
-   - Spawn point selected near trees or tree is generated
-   - All dimensions (Overworld, Nether, End) share the same border
-
-2. **Item Collection**:
-   - Pick up any item for the first time globally
-   - Border expands by configured increment (default: +1 block)
-   - Everyone is notified
-   - Your personal count updates in TAB list
-
-3. **Progress Tracking**:
-   - Global: All unique items collected by any player
-   - Personal: Items you individually collected
-   - TAB list shows your personal count
-
-## 🚫 Excluded Items
-
-The following items are automatically excluded (can be overridden in config):
-
-### Creative/Unobtainable
-- Command blocks
-- Barriers & structure blocks
-- Debug stick
-- Bedrock
-- Spawners
-- End portal frames
-
-### Technical Blocks
-- Farmland (turns to dirt when broken)
-- Infested blocks
-- Budding amethyst
-- Reinforced deepslate
-
-## 🎯 Tips & Strategies
-
-1. **Start Simple**: 
-   - Break grass for seeds
-   - Chop tree for wood tools
-   - Collect basic blocks first
-
-2. **Branch Out**:
-   - Each new item expands your area
-   - Plan your exploration route
-   - Mark important locations
-
-3. **Multiplayer**:
-   - Work together to find items faster
-   - Global expansion helps everyone
-   - Track your personal contribution in TAB
-
-4. **Late Game**:
-   - Use `/wbe missing` to find what's left
-   - Trade with villagers for rare items
-   - Explore structures for unique loot
-
-## 🐛 Troubleshooting
-
-### World takes forever to load
-- **Solution**: Reduce `spawnSearchRadius` to 64-96 in config
-- The mod will fallback to generating a tree at (0,Y,0)
-
-### Border expanding too fast/slow
-- **Solution**: Adjust `expansionIncrement` in config
-- Or use `/wbe config expansionIncrement <value>` in-game
-
-### Want fewer required items
-- **Solution**: Add items to `excludedItems` list
-- Example: Exclude all music discs for faster completion
-
-### Config not working
-- **Solution**: Use `/wbe reload` or restart server
-- Check JSON syntax is valid
-- Some settings only apply to new worlds
-
-## 🔧 Development
-
-### Building from Source
-```bash
-git clone <repository>
-cd worldborderexpander
-./gradlew build
-```
-
-The compiled JAR will be in `build/libs/`
-
-### Project Structure
-```
-src/main/java/com/example/worldborderexpander/
-├── WorldBorderExpander.java    # Main mod class
-├── WBEConfig.java              # Configuration system
-└── mixin/
-    ├── ItemEntityPickupMixin.java
-    ├── PlayerInventoryMixin.java
-    └── ScreenHandlerMixin.java
-```
-
-## 📝 License
-
-This mod is open source. Feel free to modify and distribute!
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues.
-
-### Ideas for Contributions
-- Biome-specific spawn preferences
-- Custom achievement system
-- Border growth animations
-- Team-based modes
-- Item category filtering
-
-## 📞 Support
-
-- **Issues**: Open an issue on GitHub
-- **Questions**: Check CONFIG_GUIDE.md first
-- **Multiplayer**: Works on both clients and servers!
-
-## 🎉 Credits
-
-Created for players who love exploration challenges and unique gameplay twists!
-
----
-
-**Enjoy your confined adventure! Every item counts! 🌍**
+**Want to reset progress?**
+- Delete the world and create a new one
+- Config changes apply immediately to new worlds
