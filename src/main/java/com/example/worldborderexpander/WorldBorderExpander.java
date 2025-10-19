@@ -14,18 +14,14 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
-import net.minecraft.network.PacketByteBuf;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.block.SaplingBlock;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.SpawnEggItem;
 import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.BiomeTags;
 import net.minecraft.registry.tag.BlockTags;
@@ -42,8 +38,6 @@ import net.minecraft.util.Identifier;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.border.WorldBorder;
-import net.minecraft.world.gen.feature.ConfiguredFeature;
-import net.minecraft.world.gen.feature.TreeFeatureConfig;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -72,11 +66,10 @@ public class WorldBorderExpander implements ModInitializer {
     @Override
     public void onInitialize() {
         WBENetworking.registerCommon();
-        // Load config
-        config = WBEConfig.load();
         
-        // Initialize obtainable items list
+        config = WBEConfig.load();
         initializeObtainableItems();
+        
         ServerLifecycleEvents.SERVER_STARTED.register(s -> {
             server = s;
             GLOBAL_UNIQUE.clear();
@@ -98,15 +91,24 @@ public class WorldBorderExpander implements ModInitializer {
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, srv) -> {
             ServerPlayerEntity player = handler.getPlayer();
+            
+            // Teleport player to spawn
             player.teleport(
                 SPAWN_POS.getX() + 0.5,
                 SPAWN_POS.getY(),
                 SPAWN_POS.getZ() + 0.5,
                 false
             );
+            
             ensureObjective();
             updatePlayerScore(player);
-            sendFullSync(player);
+            
+            // Send sync AFTER player is fully loaded (delay by 1 tick)
+            srv.execute(() -> {
+                if (player.networkHandler != null) {
+                    sendFullSync(player);
+                }
+            });
         });
 
         // Register commands
@@ -272,15 +274,21 @@ public class WorldBorderExpander implements ModInitializer {
 
     public static void onItemPickedUp(ServerPlayerEntity player, ItemStack stack) {
         if (stack.isEmpty()) return;
+        
+        // Check if player network handler is ready
+        if (player.networkHandler == null) return;
+        
         Identifier id = Registries.ITEM.getId(stack.getItem());
         if (!OBTAINABLE_ITEMS.contains(id)) return;
 
+        boolean newForPlayer = PER_PLAYER.computeIfAbsent(player.getUuid(), k -> new HashSet<>()).add(id);
+        
+        // Only send personal update if it's new for this player
+        if (newForPlayer) {
+            sendAddPersonal(player, id);
+        }
+
         boolean newForGlobal = GLOBAL_UNIQUE.add(id);
-        PER_PLAYER.computeIfAbsent(player.getUuid(), k -> new HashSet<>()).add(id);
-
-        // дельта персонально
-        sendAddPersonal(player, id);
-
         updatePlayerScore(player);
 
         if (newForGlobal) {
@@ -288,17 +296,14 @@ public class WorldBorderExpander implements ModInitializer {
             if (config.broadcastNewItems) {
                 String itemName = stack.getName().getString();
                 String playerName = config.showPlayerName ? player.getName().getString() : "Someone";
-                broadcast(Text.literal("§6[WBE] §e" + playerName + " §fнашёл новый предмет: §a" + itemName
+                broadcast(Text.literal("§6[WBE] §e" + playerName + " §ffound a new item: §a" + itemName
                         + " §7(" + GLOBAL_UNIQUE.size() + "/" + OBTAINABLE_ITEMS.size() + ")"));
-                broadcast(Text.literal("§7→ Граница расширена до §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7блоков!"));
+                broadcast(Text.literal("§7→ Border expanded to §f" + (int)server.getOverworld().getWorldBorder().getSize() + " §7blocks!"));
             }
             updateAllScores();
-
-            // дельта всем — теперь глобально найден
             sendAddGlobalToAll(id);
         }
     }
-
 
     /* -------------------- Obtainable Items Filter -------------------- */
 
@@ -315,8 +320,14 @@ public class WorldBorderExpander implements ModInitializer {
             Items.INFESTED_STONE_BRICKS, Items.INFESTED_MOSSY_STONE_BRICKS,
             Items.INFESTED_CRACKED_STONE_BRICKS, Items.INFESTED_CHISELED_STONE_BRICKS,
             Items.INFESTED_DEEPSLATE, Items.REINFORCED_DEEPSLATE,
-            Items.BUDDING_AMETHYST, Items.PETRIFIED_OAK_SLAB, Items.TIPPED_ARROW
+            Items.BUDDING_AMETHYST, Items.PETRIFIED_OAK_SLAB, Items.TIPPED_ARROW,
+            Items.TRIAL_SPAWNER
         ));
+
+        // Exclude all spawn eggs
+        Registries.ITEM.stream()
+            .filter(item -> item instanceof SpawnEggItem)
+            .forEach(excluded::add);
 
         // Add custom excluded items from config
         for (String itemId : config.excludedItems) {
@@ -348,14 +359,12 @@ public class WorldBorderExpander implements ModInitializer {
     /* -------------------- Spawn with Tree Guarantee -------------------- */
 
     private static BlockPos ensureSpawnWithTree(ServerWorld world) {
-        // Try to find natural tree spawn first
         BlockPos naturalSpawn = findNaturalTreeSpawn(world);
         if (naturalSpawn != null) {
             world.getServer().sendMessage(Text.literal("[WBE] Found natural tree at " + naturalSpawn.toShortString()));
             return naturalSpawn;
         }
         
-        // No tree found nearby, spawn our own tree at (0, y, 0)
         world.getServer().sendMessage(Text.literal("[WBE] No natural tree found, generating tree at spawn..."));
         BlockPos spawnPos = generateTreeAtSpawn(world);
         world.getServer().sendMessage(Text.literal("[WBE] Tree generated at " + spawnPos.toShortString()));
@@ -363,14 +372,12 @@ public class WorldBorderExpander implements ModInitializer {
     }
 
     private static BlockPos findNaturalTreeSpawn(ServerWorld world) {
-        int maxRadius = Math.min(config.spawnSearchRadius, 128); // Cap at 128 for performance
-        int step = 8; // Check every 8 blocks
+        int maxRadius = Math.min(config.spawnSearchRadius, 128);
+        int step = 8;
         
-        // Check center first
         BlockPos center = checkForTreeNearby(world, 0, 0, 2);
         if (center != null) return center;
         
-        // Check in expanding rings
         for (int r = step; r <= maxRadius; r += step) {
             for (int x = -r; x <= r; x += step) {
                 for (int z = -r; z <= r; z += step) {
@@ -389,17 +396,14 @@ public class WorldBorderExpander implements ModInitializer {
         int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
         BlockPos center = new BlockPos(x, y, z);
         
-        // Skip if in ocean
         if (isOceanBiome(world, center)) return null;
         
-        // Check if there's a log within radius
         BlockPos.Mutable m = new BlockPos.Mutable();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
                 for (int dy = -1; dy <= 8; dy++) {
                     m.set(x + dx, y + dy, z + dz);
                     if (world.getBlockState(m).isIn(BlockTags.LOGS)) {
-                        // Found a log! Return a safe spot next to it
                         return getSafeSpotNearTree(world, m.toImmutable());
                     }
                 }
@@ -410,7 +414,6 @@ public class WorldBorderExpander implements ModInitializer {
     }
 
     private static BlockPos getSafeSpotNearTree(ServerWorld world, BlockPos treePos) {
-        // Try to find a safe spot on the ground near the tree
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 if (dx == 0 && dz == 0) continue;
@@ -429,45 +432,36 @@ public class WorldBorderExpander implements ModInitializer {
             }
         }
         
-        // Fallback to tree position
         return treePos;
     }
 
     private static BlockPos generateTreeAtSpawn(ServerWorld world) {
-        // Find suitable spot at (0, y, 0)
         int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, 0, 0);
         BlockPos basePos = new BlockPos(0, y, 0);
         
-        // Make sure we have solid ground
         BlockState ground = world.getBlockState(basePos);
         if (ground.isAir() || !ground.getFluidState().isEmpty()) {
-            // Place grass block
             world.setBlockState(basePos, Blocks.GRASS_BLOCK.getDefaultState());
         }
         
-        // Generate a simple oak tree
         BlockPos treeBase = basePos.up();
         generateSimpleOakTree(world, treeBase);
         
-        // Return spawn position next to tree
         return basePos;
     }
 
     private static void generateSimpleOakTree(ServerWorld world, BlockPos base) {
         Random random = new Random();
-        int height = 4 + random.nextInt(3); // 4-6 blocks tall
+        int height = 4 + random.nextInt(3);
         
-        // Place trunk
         for (int i = 0; i < height; i++) {
             world.setBlockState(base.up(i), Blocks.OAK_LOG.getDefaultState());
         }
         
-        // Place leaves (simple sphere shape)
         BlockPos leafBase = base.up(height - 2);
         for (int dx = -2; dx <= 2; dx++) {
             for (int dy = -1; dy <= 2; dy++) {
                 for (int dz = -2; dz <= 2; dz++) {
-                    // Skip corners and center column
                     if (Math.abs(dx) == 2 && Math.abs(dz) == 2) continue;
                     if (dx == 0 && dz == 0 && dy <= 0) continue;
                     
@@ -479,7 +473,6 @@ public class WorldBorderExpander implements ModInitializer {
             }
         }
         
-        // Top leaf
         world.setBlockState(base.up(height), Blocks.OAK_LEAVES.getDefaultState());
     }
 
@@ -552,22 +545,29 @@ public class WorldBorderExpander implements ModInitializer {
         }
     }
 
+    /* -------------------- Networking -------------------- */
+
     private static void sendFullSync(ServerPlayerEntity player) {
-        // global
+        if (player.networkHandler == null) return;
+        
         ServerPlayNetworking.send(player, new WBEPayloads.SyncAllGlobal(new ArrayList<>(GLOBAL_UNIQUE)));
-        // personal
-        var personal = PER_PLAYER.getOrDefault(player.getUuid(), java.util.Collections.emptySet());
+        
+        var personal = PER_PLAYER.getOrDefault(player.getUuid(), Collections.emptySet());
         ServerPlayNetworking.send(player, new WBEPayloads.SyncAllPersonal(new ArrayList<>(personal)));
     }
 
     private static void sendAddGlobalToAll(Identifier id) {
+        if (server == null) return;
         var payload = new WBEPayloads.AddGlobal(id);
         for (ServerPlayerEntity pl : server.getPlayerManager().getPlayerList()) {
-            ServerPlayNetworking.send(pl, payload);
+            if (pl.networkHandler != null) {
+                ServerPlayNetworking.send(pl, payload);
+            }
         }
     }
 
     private static void sendAddPersonal(ServerPlayerEntity player, Identifier id) {
+        if (player.networkHandler == null) return;
         ServerPlayNetworking.send(player, new WBEPayloads.AddPersonal(id));
     }
 }
